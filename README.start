@@ -1,0 +1,43 @@
+# SIMON-TECH-BOT - Node.js WhatsApp Bot
+
+## Get started
+
+Install dependencies with npm
+```
+npm install
+```
+
+Generate session ID
+```
+npm run session
+```
+
+Create .env file from .env.example
+```
+cp .env.example .env
+```
+
+Start the bot
+```
+npm start
+```
+
+Or in development mode:
+```
+npm run dev
+```
+
+## Features
+
+- 200+ Commands
+- AI System
+- Game System
+- Economy System
+- Media Tools
+- Security System
+- Group Management
+- And Much More!
+
+## License
+
+MIT
