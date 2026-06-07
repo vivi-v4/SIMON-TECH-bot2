@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
@@ -6,6 +7,7 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
 
 app.use(express.static('public'));
 app.use(express.json());
@@ -14,6 +16,16 @@ let qrCodeData = null;
 let sessionGenerated = false;
 let sessionId = null;
 let pairingCode = null;
+
+// Log startup info
+console.log('🚀 SIMON-TECH-BOT v2.0.0 Starting...');
+console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
+console.log(`📱 Port: ${PORT}`);
+if (TELEGRAM_BOT_TOKEN) {
+  console.log('✅ Telegram Bot Token loaded');
+} else {
+  console.log('⚠️  No Telegram Bot Token found (optional)');
+}
 
 // Ensure sessions directory exists
 const sessionsDir = path.join(__dirname, 'sessions');
@@ -562,7 +574,17 @@ app.get('/check-session', (req, res) => {
   res.json({ sessionGenerated, sessionId });
 });
 
+// Health check endpoint for Railway
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'OK',
+    uptime: process.uptime(),
+    version: '2.0.0'
+  });
+});
+
 app.listen(PORT, () => {
-  console.log(`🚀 Session Generator v2 running on http://localhost:${PORT}`);
-  console.log(`📱 Open this link in your browser to generate your SESSION_ID`);
+  console.log(`\n✅ SIMON-TECH-BOT v2.0.0 is running!`);
+  console.log(`🌐 Server: http://localhost:${PORT}`);
+  console.log(`📱 Open in your browser to generate SESSION_ID\n`);
 });
