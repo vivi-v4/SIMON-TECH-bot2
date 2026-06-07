@@ -16,6 +16,10 @@ let qrCodeData = null;
 let sessionGenerated = false;
 let sessionId = null;
 let pairingCode = null;
+let activeSocket = null;
+let generationInProgress = false;
+let qrTimeout = null;
+let phoneTimeout = null;
 
 // Log startup info
 console.log('🚀 SIMON-TECH-BOT v2.0.0 Starting...');
@@ -33,8 +37,39 @@ if (!fs.existsSync(sessionsDir)) {
   fs.mkdirSync(sessionsDir, { recursive: true });
 }
 
+// Helper function to reset state
+function resetState(method = 'all') {
+  if (method === 'qr' || method === 'all') {
+    qrCodeData = null;
+    if (qrTimeout) clearTimeout(qrTimeout);
+  }
+  if (method === 'phone' || method === 'all') {
+    pairingCode = null;
+    if (phoneTimeout) clearTimeout(phoneTimeout);
+  }
+  if (method === 'all') {
+    sessionGenerated = false;
+    sessionId = null;
+    generationInProgress = false;
+    if (activeSocket) {
+      try {
+        activeSocket.end();
+      } catch (e) {}
+      activeSocket = null;
+    }
+  }
+}
+
 // Session Generator with QR Code method
 async function generateSessionQR() {
+  if (generationInProgress) {
+    console.log('⚠️  Session generation already in progress');
+    return;
+  }
+
+  generationInProgress = true;
+  resetState('qr');
+
   try {
     const { state, saveCreds } = await useMultiFileAuthState(path.join(sessionsDir, 'SIMON'));
 
@@ -43,6 +78,8 @@ async function generateSessionQR() {
       printQRInTerminal: false,
     });
 
+    activeSocket = sock;
+
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr } = update;
 
@@ -50,6 +87,13 @@ async function generateSessionQR() {
         qrCodeData = qr;
         sessionGenerated = false;
         console.log('✅ QR Code generated. Scan it with your WhatsApp app.');
+
+        // Set QR code expiration timeout (60 seconds)
+        if (qrTimeout) clearTimeout(qrTimeout);
+        qrTimeout = setTimeout(() => {
+          console.log('⏰ QR Code expired. Please generate a new one.');
+          resetState('qr');
+        }, 60000);
       }
 
       if (connection === 'open') {
@@ -66,13 +110,21 @@ async function generateSessionQR() {
           sessionId = encodedSession;
           console.log(`\n🔐 Your SESSION_ID (Base64):\n${sessionId}\n`);
         }
+        
+        generationInProgress = false;
       }
 
       if (connection === 'close') {
         const shouldReconnect =
           lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-        if (shouldReconnect) {
+        
+        if (shouldReconnect && generationInProgress) {
+          console.log('🔄 Reconnecting...');
           setTimeout(generateSessionQR, 3000);
+        } else if (!shouldReconnect) {
+          console.log('❌ QR Session ended (logged out)');
+          resetState('qr');
+          generationInProgress = false;
         }
       }
     });
@@ -81,11 +133,28 @@ async function generateSessionQR() {
 
   } catch (error) {
     console.error('Error generating session:', error);
+    generationInProgress = false;
+    resetState('qr');
   }
 }
 
 // Session Generator with Phone Number Pairing
 async function generateSessionPhone(phoneNumber) {
+  if (generationInProgress) {
+    console.log('⚠️  Session generation already in progress');
+    return;
+  }
+
+  // Validate phone number format
+  if (!phoneNumber || typeof phoneNumber !== 'string' || phoneNumber.length < 10) {
+    console.error('❌ Invalid phone number format');
+    pairingCode = 'INVALID_PHONE';
+    return;
+  }
+
+  generationInProgress = true;
+  resetState('phone');
+
   try {
     const { state, saveCreds } = await useMultiFileAuthState(path.join(sessionsDir, 'SIMON_PHONE'));
 
@@ -93,6 +162,8 @@ async function generateSessionPhone(phoneNumber) {
       auth: state,
       printQRInTerminal: false,
     });
+
+    activeSocket = sock;
 
     sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect } = update;
@@ -111,28 +182,62 @@ async function generateSessionPhone(phoneNumber) {
           sessionId = encodedSession;
           console.log(`\n🔐 Your SESSION_ID (Base64):\n${sessionId}\n`);
         }
+
+        generationInProgress = false;
       }
 
       if (connection === 'close') {
         const shouldReconnect =
           lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-        if (shouldReconnect) {
+
+        if (shouldReconnect && generationInProgress) {
+          console.log('🔄 Reconnecting...');
           setTimeout(() => generateSessionPhone(phoneNumber), 3000);
+        } else if (!shouldReconnect) {
+          console.log('❌ Phone Session ended (logged out)');
+          resetState('phone');
+          generationInProgress = false;
         }
       }
     });
 
-    // Request pairing code
-    if (!sock.authState.creds.registered) {
-      const code = await sock.requestPairingCode(phoneNumber);
-      pairingCode = code;
-      console.log(`\n📱 Pairing Code: ${code}\n`);
-    }
+    // Wait for socket to be ready before requesting pairing code
+    sock.ev.on('connection.update', async (update) => {
+      if (update.connection === 'connecting') {
+        // Socket is connecting, wait a bit more
+        return;
+      }
+    });
+
+    // Request pairing code after a short delay to ensure socket is ready
+    setTimeout(async () => {
+      try {
+        if (!sock.authState.creds.registered) {
+          const code = await sock.requestPairingCode(phoneNumber);
+          pairingCode = code;
+          console.log(`\n📱 Pairing Code: ${code}\n`);
+
+          // Set pairing code timeout (120 seconds for phone pairing)
+          if (phoneTimeout) clearTimeout(phoneTimeout);
+          phoneTimeout = setTimeout(() => {
+            console.log('⏰ Pairing code expired. Please request a new one.');
+            resetState('phone');
+          }, 120000);
+        }
+      } catch (error) {
+        console.error('Error requesting pairing code:', error);
+        pairingCode = null;
+        generationInProgress = false;
+      }
+    }, 2000);
 
     sock.ev.on('creds.update', saveCreds);
 
   } catch (error) {
     console.error('Error generating session via phone:', error);
+    generationInProgress = false;
+    pairingCode = null;
+    resetState('phone');
   }
 }
 
@@ -236,6 +341,11 @@ app.get('/', (req, res) => {
         .button:hover {
           transform: translateY(-2px);
           box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+        .button:disabled {
+          opacity: 0.6;
+          cursor: not-allowed;
+          transform: none;
         }
         .input-group {
           margin: 20px 0;
@@ -356,7 +466,7 @@ app.get('/', (req, res) => {
             4. Copy your SESSION_ID
           </div>
 
-          <button class="button" onclick="generateQR()">🔄 Generate QR Code</button>
+          <button class="button" id="qr-btn" onclick="generateQR()">🔄 Generate QR Code</button>
           
           <div id="qr-status" class="status"></div>
           
@@ -390,7 +500,7 @@ app.get('/', (req, res) => {
             <input type="tel" id="phoneNumber" placeholder="+1234567890" />
           </div>
 
-          <button class="button" onclick="generatePhone()">📲 Request Pairing Code</button>
+          <button class="button" id="phone-btn" onclick="generatePhone()">📲 Request Pairing Code</button>
           
           <div id="phone-status" class="status"></div>
           
@@ -417,11 +527,13 @@ app.get('/', (req, res) => {
         }
 
         async function generateQR() {
+          const btn = document.getElementById('qr-btn');
           const status = document.getElementById('qr-status');
           const qrContainer = document.getElementById('qrContainer');
           const sessionDisplay = document.getElementById('qr-sessionDisplay');
           const copyBtn = document.getElementById('qr-copyBtn');
 
+          btn.disabled = true;
           status.textContent = '⏳ Generating QR Code...';
           status.className = 'status active waiting';
           qrContainer.classList.remove('active');
@@ -440,20 +552,31 @@ app.get('/', (req, res) => {
               status.className = 'status active waiting';
 
               checkSessionQR();
+            } else {
+              throw new Error('Failed to generate QR code');
             }
           } catch (error) {
             status.textContent = '❌ Error: ' + error.message;
             status.className = 'status active error';
+            btn.disabled = false;
           }
         }
 
         async function generatePhone() {
-          const phoneNumber = document.getElementById('phoneNumber').value;
+          const phoneNumber = document.getElementById('phoneNumber').value.trim();
+          const btn = document.getElementById('phone-btn');
+          
           if (!phoneNumber) {
             alert('❌ Please enter a phone number');
             return;
           }
 
+          if (phoneNumber.length < 10 || !/^\+?[0-9]{10,}$/.test(phoneNumber)) {
+            alert('❌ Please enter a valid phone number (e.g., +1234567890)');
+            return;
+          }
+
+          btn.disabled = true;
           const status = document.getElementById('phone-status');
           const pairingDisplay = document.getElementById('pairingCodeDisplay');
           const sessionDisplay = document.getElementById('phone-sessionDisplay');
@@ -473,17 +596,25 @@ app.get('/', (req, res) => {
             });
             const data = await response.json();
 
-            if (data.pairingCode) {
+            if (data.error) {
+              throw new Error(data.error);
+            }
+
+            if (data.pairingCode && data.pairingCode !== 'Generating...' && data.pairingCode !== 'INVALID_PHONE') {
               document.getElementById('pairingCodeValue').textContent = data.pairingCode;
               pairingDisplay.style.display = 'block';
               status.textContent = '📲 Pairing code sent. Check your WhatsApp linked devices.';
               status.className = 'status active waiting';
 
               checkSessionPhone();
+            } else {
+              status.textContent = '⏳ Generating pairing code, please wait...';
+              checkSessionPhone();
             }
           } catch (error) {
             status.textContent = '❌ Error: ' + error.message;
             status.className = 'status active error';
+            btn.disabled = false;
           }
         }
 
@@ -496,6 +627,7 @@ app.get('/', (req, res) => {
               const status = document.getElementById('qr-status');
               const sessionDisplay = document.getElementById('qr-sessionDisplay');
               const copyBtn = document.getElementById('qr-copyBtn');
+              const btn = document.getElementById('qr-btn');
 
               document.getElementById('qr-sessionId').textContent = data.sessionId;
               sessionDisplay.classList.add('active');
@@ -505,6 +637,7 @@ app.get('/', (req, res) => {
               status.className = 'status active success';
               
               document.getElementById('qrContainer').classList.remove('active');
+              btn.disabled = false;
             } else {
               setTimeout(checkSessionQR, 2000);
             }
@@ -522,6 +655,7 @@ app.get('/', (req, res) => {
               const status = document.getElementById('phone-status');
               const sessionDisplay = document.getElementById('phone-sessionDisplay');
               const copyBtn = document.getElementById('phone-copyBtn');
+              const btn = document.getElementById('phone-btn');
 
               document.getElementById('phone-sessionId').textContent = data.sessionId;
               sessionDisplay.classList.add('active');
@@ -531,6 +665,7 @@ app.get('/', (req, res) => {
               status.className = 'status active success';
               
               document.getElementById('pairingCodeDisplay').style.display = 'none';
+              btn.disabled = false;
             } else {
               setTimeout(checkSessionPhone, 2000);
             }
@@ -564,7 +699,14 @@ app.post('/generate-phone', (req, res) => {
   const { phoneNumber } = req.body;
   if (phoneNumber) {
     generateSessionPhone(phoneNumber);
-    res.json({ pairingCode: pairingCode || 'Generating...' });
+    // Return pairing code with small delay to allow generation
+    setTimeout(() => {
+      if (pairingCode && pairingCode !== 'INVALID_PHONE') {
+        res.json({ pairingCode });
+      } else {
+        res.json({ pairingCode: 'Generating...' });
+      }
+    }, 500);
   } else {
     res.status(400).json({ error: 'Phone number required' });
   }
