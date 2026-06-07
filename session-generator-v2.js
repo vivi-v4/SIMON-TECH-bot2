@@ -5,6 +5,7 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = requi
 const QRCode = require('qrcode');
 const fs = require('fs');
 const path = require('path');
+const axios = require('axios');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,6 +28,7 @@ let qrCodeData = null;
 let sessionGenerated = false;
 let sessionId = null;
 let pairingCode = null;
+let pairingLink = null;
 let activeSocket = null;
 let generationInProgress = false;
 let qrTimeout = null;
@@ -35,31 +37,20 @@ let phoneTimeout = null;
 // Track user sessions
 const userSessions = new Map();
 
-// Country codes mapping
-const COUNTRY_CODES = {
-  'us': { flag: '🇺🇸', code: '+1', country: 'United States' },
-  'uk': { flag: '🇬🇧', code: '+44', country: 'United Kingdom' },
+// RESTRICTED: Only allowed countries
+const ALLOWED_COUNTRIES = {
   'in': { flag: '🇮🇳', code: '+91', country: 'India' },
   'bd': { flag: '🇧🇩', code: '+880', country: 'Bangladesh' },
   'pk': { flag: '🇵🇰', code: '+92', country: 'Pakistan' },
   'ng': { flag: '🇳🇬', code: '+234', country: 'Nigeria' },
   'za': { flag: '🇿🇦', code: '+27', country: 'South Africa' },
   'eg': { flag: '🇪🇬', code: '+20', country: 'Egypt' },
-  'mx': { flag: '🇲🇽', code: '+52', country: 'Mexico' },
-  'br': { flag: '🇧🇷', code: '+55', country: 'Brazil' },
-  'ar': { flag: '🇦🇷', code: '+54', country: 'Argentina' },
   'ph': { flag: '🇵🇭', code: '+63', country: 'Philippines' },
   'id': { flag: '🇮🇩', code: '+62', country: 'Indonesia' },
   'th': { flag: '🇹🇭', code: '+66', country: 'Thailand' },
   'vn': { flag: '🇻🇳', code: '+84', country: 'Vietnam' },
-  'jp': { flag: '🇯🇵', code: '+81', country: 'Japan' },
-  'kr': { flag: '🇰🇷', code: '+82', country: 'South Korea' },
-  'de': { flag: '🇩🇪', code: '+49', country: 'Germany' },
-  'fr': { flag: '🇫🇷', code: '+33', country: 'France' },
-  'it': { flag: '🇮🇹', code: '+39', country: 'Italy' },
-  'es': { flag: '🇪🇸', code: '+34', country: 'Spain' },
-  'ca': { flag: '🇨🇦', code: '+1', country: 'Canada' },
-  'au': { flag: '🇦🇺', code: '+61', country: 'Australia' },
+  'br': { flag: '🇧🇷', code: '+55', country: 'Brazil' },
+  'mx': { flag: '🇲🇽', code: '+52', country: 'Mexico' },
 };
 
 // Telegram Bot Commands Configuration
@@ -119,6 +110,7 @@ function resetState(method = 'all') {
   }
   if (method === 'phone' || method === 'all') {
     pairingCode = null;
+    pairingLink = null;
     if (phoneTimeout) clearTimeout(phoneTimeout);
   }
   if (method === 'all') {
@@ -249,7 +241,7 @@ async function generateSessionQR(telegramCtx = null) {
 }
 
 // Session Generator with Phone Number Pairing
-async function generateSessionPhone(phoneNumber, telegramCtx = null) {
+async function generateSessionPhone(phoneNumber, telegramCtx = null, userId = null) {
   if (generationInProgress) {
     console.log('⚠️  Session generation already in progress');
     if (telegramCtx) {
@@ -321,7 +313,7 @@ async function generateSessionPhone(phoneNumber, telegramCtx = null) {
 
         if (shouldReconnect && generationInProgress) {
           console.log('🔄 Reconnecting...');
-          setTimeout(() => generateSessionPhone(phoneNumber, telegramCtx), 3000);
+          setTimeout(() => generateSessionPhone(phoneNumber, telegramCtx, userId), 3000);
         } else if (!shouldReconnect) {
           console.log('❌ Phone Session ended (logged out)');
           if (telegramCtx) {
@@ -336,7 +328,6 @@ async function generateSessionPhone(phoneNumber, telegramCtx = null) {
     // Wait for socket to be ready before requesting pairing code
     sock.ev.on('connection.update', async (update) => {
       if (update.connection === 'connecting') {
-        // Socket is connecting, wait a bit more
         return;
       }
     });
@@ -349,22 +340,37 @@ async function generateSessionPhone(phoneNumber, telegramCtx = null) {
           pairingCode = code;
           console.log(`\n📱 Pairing Code: ${code}\n`);
           
-          // Send pairing code to Telegram with fancy formatting
+          // Generate WhatsApp linking URL
+          pairingLink = `https://wa.me/?code=${code}`;
+          console.log(`🔗 Pairing Link: ${pairingLink}`);
+          
+          // Send pairing code AND link to Telegram with notifications
           if (telegramCtx) {
+            // Send notification with sound
             const message = `
 ╰┈➤ <b>Sᴇssɪᴏɴ Cᴏɴɴᴇᴄᴛɪɴɢ. ❤️‍🩹</b>
 
 ╰┈➤ <b>ᴘᴀɪʀɪɴɢ ᴄᴏᴅᴇ :</b> <code>${code}</code>
 
-╰┈➤ <b>ɪɴsᴛʀᴜᴄᴛɪᴏɴs :</b>
-   1️⃣ Open WhatsApp on your phone
-   2️⃣ Go to Settings → Linked Devices
-   3️⃣ Tap "Link a device"
-   4️⃣ Enter the code above when prompted
+╰┈➤ <b>ᴏᴘᴛɪᴏɴ 1: ᴍᴀɴᴜᴀʟ ᴇɴᴛʀʏ</b>
+   Open WhatsApp → Settings → Linked Devices → Link Device
+   Enter the code above
 
-⏱️ Code expires in 2 minutes
+╰┈➤ <b>ᴏᴘᴛɪᴏɴ 2: ᴄʟɪᴄᴋ ʟɪɴᴋ</b>
+   Tap the button below to open WhatsApp linking directly
 `;
-            telegramCtx.reply(message, {
+            
+            await telegramCtx.reply(message, {
+              parse_mode: 'HTML',
+              reply_markup: {
+                inline_keyboard: [[
+                  { text: '🔗 Open WhatsApp Link', url: pairingLink }
+                ]]
+              }
+            });
+            
+            // Send alert notification
+            await telegramCtx.reply('🔔 <b>PAIRING CODE READY!</b>\n\nYour WhatsApp pairing code is ready. Click the link above or enter the code manually in WhatsApp.', {
               parse_mode: 'HTML'
             });
           }
@@ -403,14 +409,6 @@ async function generateSessionPhone(phoneNumber, telegramCtx = null) {
 }
 
 // Telegram Command Handlers
-function getCommandsList() {
-  let commands = '📋 <b>Available Commands:</b>\n\n';
-  for (const [cmd, info] of Object.entries(TELEGRAM_COMMANDS)) {
-    commands += `${cmd} — ${info.description}\n`;
-  }
-  return commands;
-}
-
 function getWelcomeMessage() {
   return `🤖 <b>Welcome to SIMON-TECH-BOT!</b>\n\n` +
     `This bot helps you generate WhatsApp sessions for automation.\n\n` +
@@ -423,27 +421,14 @@ function getWelcomeMessage() {
 
 function getHelpMenu() {
   return `🆘 <b>Help Menu</b>\n\n` +
-    `${getCommandsList()}\n` +
-    `📖 <b>Examples:</b>\n` +
-    `/start - Start the bot\n` +
-    `/pair - Generate WhatsApp pair code\n` +
-    `/qr - Generate QR code for session\n` +
-    `/status - Check current session status\n\n` +
+    `📋 <b>Available Commands:</b>\n\n` +
+    `/start — Welcome message\n` +
+    `/pair — Generate WhatsApp pair code\n` +
+    `/qr — Generate QR code for session\n` +
+    `/ping — Check bot latency\n` +
+    `/status — Check session status\n` +
+    `/generate_session — Get current session\n\n` +
     `For more info, visit: https://github.com/vivi-v4/SIMON-TECH-bot2`;
-}
-
-function showCountrySelection() {
-  let message = `[ ♡ SIMON TECH BOT2 👀 ]\n\n`;
-  message += `<b>Select your country:</b>\n\n`;
-  
-  let i = 1;
-  for (const [code, info] of Object.entries(COUNTRY_CODES)) {
-    message += `${info.flag} ${info.country} (${info.code})\n`;
-    if (i % 3 === 0) message += '\n';
-    i++;
-  }
-  
-  return message;
 }
 
 // Setup Telegram Bot Commands
@@ -470,11 +455,11 @@ if (bot) {
     const userId = ctx.from.id;
     userSessions.set(userId, { step: 'country_select', phoneNumber: null, countryCode: null });
     
-    const message = `[ ♡ SIMON TECH BOT2 👀 ]\n\n<b>Select your country to get the correct country code:</b>\n\n`;
+    const message = `[ ♡ SIMON TECH BOT2 👀 ]\n\n<b>SELECT YOUR COUNTRY:</b>\n\n<i>Only these countries are allowed:</i>`;
     const countryButtons = [];
     
-    // Create inline buttons for countries
-    const countryList = Object.entries(COUNTRY_CODES);
+    // Create inline buttons for allowed countries only
+    const countryList = Object.entries(ALLOWED_COUNTRIES);
     for (let i = 0; i < countryList.length; i += 2) {
       const btn1 = countryList[i];
       const btn2 = countryList[i + 1];
@@ -502,7 +487,7 @@ if (bot) {
   bot.action(/country_(.+)/, async (ctx) => {
     const countryCode = ctx.match[1];
     const userId = ctx.from.id;
-    const countryInfo = COUNTRY_CODES[countryCode];
+    const countryInfo = ALLOWED_COUNTRIES[countryCode];
     
     if (countryInfo) {
       userSessions.set(userId, { step: 'enter_phone', countryCode: countryInfo.code, country: countryInfo.country });
@@ -511,6 +496,8 @@ if (bot) {
       
       await ctx.reply(message, { parse_mode: 'HTML' });
       ctx.answerCbQuery();
+    } else {
+      ctx.answerCbQuery('❌ This country is not allowed!', true);
     }
   });
   
@@ -533,7 +520,7 @@ if (bot) {
       if (/^\d{10,}$/.test(text)) {
         const fullPhoneNumber = userSession.countryCode + text;
         userSessions.delete(userId);
-        generateSessionPhone(fullPhoneNumber, ctx);
+        generateSessionPhone(fullPhoneNumber, ctx, userId);
       } else {
         ctx.reply('❌ Invalid phone number. Please send only digits (e.g., 9876543210)');
       }
@@ -601,43 +588,6 @@ app.get('/', (req, res) => {
     </body>
     </html>
   `);
-});
-
-app.get('/generate-qr', (req, res) => {
-  if (qrCodeData) {
-    res.json({ qr: qrCodeData });
-  } else {
-    generateSessionQR();
-    res.json({ message: 'Generating QR code...' });
-  }
-});
-
-app.post('/generate-phone', (req, res) => {
-  const { phoneNumber } = req.body;
-  if (phoneNumber) {
-    generateSessionPhone(phoneNumber);
-    setTimeout(() => {
-      if (pairingCode && pairingCode !== 'INVALID_PHONE') {
-        res.json({ pairingCode });
-      } else {
-        res.json({ pairingCode: 'Generating...' });
-      }
-    }, 500);
-  } else {
-    res.status(400).json({ error: 'Phone number required' });
-  }
-});
-
-app.get('/check-session', (req, res) => {
-  res.json({ sessionGenerated, sessionId });
-});
-
-app.get('/commands', (req, res) => {
-  res.json({
-    status: 'success',
-    commands: TELEGRAM_COMMANDS,
-    total: Object.keys(TELEGRAM_COMMANDS).length
-  });
 });
 
 app.get('/health', (req, res) => {
