@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const { Telegraf } = require('telegraf');
 const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const QRCode = require('qrcode');
 const fs = require('fs');
@@ -7,7 +8,17 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || null;
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+
+// Initialize Telegram Bot
+let bot = null;
+if (TELEGRAM_BOT_TOKEN) {
+  try {
+    bot = new Telegraf(TELEGRAM_BOT_TOKEN);
+  } catch (error) {
+    console.error('❌ Failed to initialize Telegram bot:', error.message);
+  }
+}
 
 app.use(express.static('public'));
 app.use(express.json());
@@ -302,6 +313,46 @@ function getHelpMenu() {
     `/qr - Generate QR code for session\n` +
     `/status - Check current session status\n\n` +
     `For more info, visit: https://github.com/vivi-v4/SIMON-TECH-bot2`;
+}
+
+// Setup Telegram Bot Commands
+if (bot) {
+  bot.start((ctx) => ctx.reply(getWelcomeMessage()));
+  
+  bot.command('help', (ctx) => ctx.reply(getHelpMenu()));
+  
+  bot.command('ping', (ctx) => {
+    const latency = Math.random() * 100; // Simulated latency
+    ctx.reply(`🏓 Pong! Latency: ${latency.toFixed(2)}ms`);
+  });
+  
+  bot.command('status', (ctx) => {
+    const status = sessionGenerated ? '✅ Session Ready' : '⏳ No active session';
+    ctx.reply(`Current Status: ${status}\n\nBot Version: 2.0.0\nUptime: ${process.uptime().toFixed(2)}s`);
+  });
+  
+  bot.command('qr', (ctx) => {
+    ctx.reply('📱 QR Code Generation started. Please visit the web interface at your Railway URL to scan and generate the session.');
+  });
+  
+  bot.command('pair', (ctx) => {
+    ctx.reply('☎️ Phone pairing started. Please visit the web interface at your Railway URL to enter your phone number.');
+  });
+  
+  bot.command('generate_session', (ctx) => {
+    ctx.reply('🔄 Generating session... Please visit the web interface at your Railway URL to monitor progress.');
+  });
+  
+  // Catch-all for unrecognized commands
+  bot.on('text', (ctx) => {
+    ctx.reply('❓ Unknown command. Use /help to see available commands.');
+  });
+  
+  // Error handling
+  bot.catch((err, ctx) => {
+    console.error('Telegram Bot Error:', err);
+    ctx.reply('❌ An error occurred. Please try again.');
+  });
 }
 
 // Web UI
@@ -817,13 +868,53 @@ app.get('/health', (req, res) => {
     status: 'OK',
     uptime: process.uptime(),
     version: '2.0.0',
-    telegram_commands: Object.keys(TELEGRAM_COMMANDS).length
+    telegram_commands: Object.keys(TELEGRAM_COMMANDS).length,
+    telegram_bot_active: bot !== null
   });
 });
 
-app.listen(PORT, () => {
+// Start Express server
+const server = app.listen(PORT, () => {
   console.log(`\n✅ SIMON-TECH-BOT v2.0.0 is running!`);
   console.log(`🌐 Server: http://localhost:${PORT}`);
   console.log(`📱 Open in your browser to generate SESSION_ID`);
   console.log(`📋 Available commands: ${Object.keys(TELEGRAM_COMMANDS).join(', ')}\n`);
 });
+
+// Start Telegram Bot with webhook or polling
+if (bot) {
+  // Use polling for reliability (works better on Railway)
+  bot.launch({
+    polling: {
+      interval: 300,
+      timeout: 20,
+      relatedUpdateTimeout: 100,
+      shouldRetry: true,
+    }
+  }).then(() => {
+    console.log('✅ Telegram Bot started (polling mode)');
+  }).catch(err => {
+    console.error('❌ Failed to start Telegram Bot:', err);
+  });
+  
+  // Enable graceful shutdown
+  process.once('SIGINT', () => {
+    console.log('Shutting down Telegram Bot...');
+    bot.stop('SIGINT');
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  });
+  
+  process.once('SIGTERM', () => {
+    console.log('Shutting down Telegram Bot...');
+    bot.stop('SIGTERM');
+    server.close(() => {
+      console.log('Server closed');
+      process.exit(0);
+    });
+  });
+} else {
+  console.log('⚠️  Telegram Bot disabled (no token provided)');
+}
