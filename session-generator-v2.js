@@ -31,6 +31,8 @@ let activeSocket = null;
 let generationInProgress = false;
 let qrTimeout = null;
 let phoneTimeout = null;
+let telegramQRUserId = null;
+let telegramPhoneUserId = null;
 
 // Telegram Bot Commands Configuration
 const TELEGRAM_COMMANDS = {
@@ -105,14 +107,21 @@ function resetState(method = 'all') {
 }
 
 // Session Generator with QR Code method
-async function generateSessionQR() {
+async function generateSessionQR(telegramCtx = null) {
   if (generationInProgress) {
     console.log('⚠️  Session generation already in progress');
+    if (telegramCtx) {
+      telegramCtx.reply('⚠️ Session generation already in progress. Please wait...');
+    }
     return;
   }
 
   generationInProgress = true;
   resetState('qr');
+  
+  if (telegramCtx) {
+    telegramCtx.reply('⏳ Generating QR Code... Please wait...');
+  }
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(path.join(sessionsDir, 'SIMON'));
@@ -132,10 +141,26 @@ async function generateSessionQR() {
         sessionGenerated = false;
         console.log('✅ QR Code generated. Scan it with your WhatsApp app.');
 
+        // Send QR code to Telegram
+        if (telegramCtx) {
+          try {
+            const qrImage = await QRCode.toDataURL(qr);
+            await telegramCtx.replyWithPhoto({ url: qrImage }, {
+              caption: '📱 Scan this QR code with your WhatsApp app to generate the session.'
+            });
+          } catch (err) {
+            console.error('Error sending QR to Telegram:', err);
+            telegramCtx.reply('📱 QR Code generated. Scan it to continue.');
+          }
+        }
+
         // Set QR code expiration timeout (60 seconds)
         if (qrTimeout) clearTimeout(qrTimeout);
         qrTimeout = setTimeout(() => {
           console.log('⏰ QR Code expired. Please generate a new one.');
+          if (telegramCtx) {
+            telegramCtx.reply('⏰ QR Code expired. Use /qr to generate a new one.');
+          }
           resetState('qr');
         }, 60000);
       }
@@ -153,6 +178,13 @@ async function generateSessionQR() {
           const encodedSession = Buffer.from(credentials).toString('base64');
           sessionId = encodedSession;
           console.log(`\n🔐 Your SESSION_ID (Base64):\n${sessionId}\n`);
+          
+          // Send session to Telegram
+          if (telegramCtx) {
+            telegramCtx.reply(`✅ Session generated successfully!\n\n🔐 <code>${sessionId}</code>`, {
+              parse_mode: 'HTML'
+            });
+          }
         }
         
         generationInProgress = false;
@@ -164,9 +196,12 @@ async function generateSessionQR() {
         
         if (shouldReconnect && generationInProgress) {
           console.log('🔄 Reconnecting...');
-          setTimeout(generateSessionQR, 3000);
+          setTimeout(() => generateSessionQR(telegramCtx), 3000);
         } else if (!shouldReconnect) {
           console.log('❌ QR Session ended (logged out)');
+          if (telegramCtx) {
+            telegramCtx.reply('❌ QR Session ended. Please try again with /qr');
+          }
           resetState('qr');
           generationInProgress = false;
         }
@@ -177,27 +212,40 @@ async function generateSessionQR() {
 
   } catch (error) {
     console.error('Error generating session:', error);
+    if (telegramCtx) {
+      telegramCtx.reply(`❌ Error generating QR: ${error.message}`);
+    }
     generationInProgress = false;
     resetState('qr');
   }
 }
 
 // Session Generator with Phone Number Pairing
-async function generateSessionPhone(phoneNumber) {
+async function generateSessionPhone(phoneNumber, telegramCtx = null) {
   if (generationInProgress) {
     console.log('⚠️  Session generation already in progress');
+    if (telegramCtx) {
+      telegramCtx.reply('⚠️ Session generation already in progress. Please wait...');
+    }
     return;
   }
 
   // Validate phone number format
   if (!phoneNumber || typeof phoneNumber !== 'string' || phoneNumber.length < 10) {
     console.error('❌ Invalid phone number format');
+    if (telegramCtx) {
+      telegramCtx.reply('❌ Invalid phone number format. Use format: +1234567890');
+    }
     pairingCode = 'INVALID_PHONE';
     return;
   }
 
   generationInProgress = true;
   resetState('phone');
+  
+  if (telegramCtx) {
+    telegramCtx.reply(`⏳ Requesting pairing code for ${phoneNumber}... Please wait...`);
+  }
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(path.join(sessionsDir, 'SIMON_PHONE'));
@@ -225,6 +273,13 @@ async function generateSessionPhone(phoneNumber) {
           const encodedSession = Buffer.from(credentials).toString('base64');
           sessionId = encodedSession;
           console.log(`\n🔐 Your SESSION_ID (Base64):\n${sessionId}\n`);
+          
+          // Send session to Telegram
+          if (telegramCtx) {
+            telegramCtx.reply(`✅ Session generated successfully!\n\n🔐 <code>${sessionId}</code>`, {
+              parse_mode: 'HTML'
+            });
+          }
         }
 
         generationInProgress = false;
@@ -236,9 +291,12 @@ async function generateSessionPhone(phoneNumber) {
 
         if (shouldReconnect && generationInProgress) {
           console.log('🔄 Reconnecting...');
-          setTimeout(() => generateSessionPhone(phoneNumber), 3000);
+          setTimeout(() => generateSessionPhone(phoneNumber, telegramCtx), 3000);
         } else if (!shouldReconnect) {
           console.log('❌ Phone Session ended (logged out)');
+          if (telegramCtx) {
+            telegramCtx.reply('❌ Phone session ended. Please try again with /pair');
+          }
           resetState('phone');
           generationInProgress = false;
         }
@@ -260,16 +318,29 @@ async function generateSessionPhone(phoneNumber) {
           const code = await sock.requestPairingCode(phoneNumber);
           pairingCode = code;
           console.log(`\n📱 Pairing Code: ${code}\n`);
+          
+          // Send pairing code to Telegram
+          if (telegramCtx) {
+            telegramCtx.reply(`📲 Pairing Code: <code>${code}</code>\n\nEnter this code in WhatsApp Linked Devices to continue.`, {
+              parse_mode: 'HTML'
+            });
+          }
 
           // Set pairing code timeout (120 seconds for phone pairing)
           if (phoneTimeout) clearTimeout(phoneTimeout);
           phoneTimeout = setTimeout(() => {
             console.log('⏰ Pairing code expired. Please request a new one.');
+            if (telegramCtx) {
+              telegramCtx.reply('⏰ Pairing code expired. Use /pair to request a new one.');
+            }
             resetState('phone');
           }, 120000);
         }
       } catch (error) {
         console.error('Error requesting pairing code:', error);
+        if (telegramCtx) {
+          telegramCtx.reply(`❌ Error requesting pairing code: ${error.message}`);
+        }
         pairingCode = null;
         generationInProgress = false;
       }
@@ -279,6 +350,9 @@ async function generateSessionPhone(phoneNumber) {
 
   } catch (error) {
     console.error('Error generating session via phone:', error);
+    if (telegramCtx) {
+      telegramCtx.reply(`❌ Error: ${error.message}`);
+    }
     generationInProgress = false;
     pairingCode = null;
     resetState('phone');
@@ -287,7 +361,7 @@ async function generateSessionPhone(phoneNumber) {
 
 // Telegram Command Handlers
 function getCommandsList() {
-  let commands = '📋 **Available Commands:**\n\n';
+  let commands = '📋 <b>Available Commands:</b>\n\n';
   for (const [cmd, info] of Object.entries(TELEGRAM_COMMANDS)) {
     commands += `${cmd} — ${info.description}\n`;
   }
@@ -295,9 +369,9 @@ function getCommandsList() {
 }
 
 function getWelcomeMessage() {
-  return `🤖 Welcome to SIMON-TECH-BOT!\n\n` +
+  return `🤖 <b>Welcome to SIMON-TECH-BOT!</b>\n\n` +
     `This bot helps you generate WhatsApp sessions for automation.\n\n` +
-    `✨ Features:\n` +
+    `✨ <b>Features:</b>\n` +
     `• Generate WhatsApp session via QR Code\n` +
     `• Generate session via Phone Number pairing\n` +
     `• Check bot status and latency\n\n` +
@@ -305,9 +379,9 @@ function getWelcomeMessage() {
 }
 
 function getHelpMenu() {
-  return `🆘 **Help Menu**\n\n` +
+  return `🆘 <b>Help Menu</b>\n\n` +
     `${getCommandsList()}\n` +
-    `📖 Examples:\n` +
+    `📖 <b>Examples:</b>\n` +
     `/start - Start the bot\n` +
     `/pair - Generate WhatsApp pair code\n` +
     `/qr - Generate QR code for session\n` +
@@ -317,9 +391,9 @@ function getHelpMenu() {
 
 // Setup Telegram Bot Commands
 if (bot) {
-  bot.start((ctx) => ctx.reply(getWelcomeMessage()));
+  bot.start((ctx) => ctx.reply(getWelcomeMessage(), { parse_mode: 'HTML' }));
   
-  bot.command('help', (ctx) => ctx.reply(getHelpMenu()));
+  bot.command('help', (ctx) => ctx.reply(getHelpMenu(), { parse_mode: 'HTML' }));
   
   bot.command('ping', (ctx) => {
     const latency = Math.random() * 100; // Simulated latency
@@ -328,24 +402,37 @@ if (bot) {
   
   bot.command('status', (ctx) => {
     const status = sessionGenerated ? '✅ Session Ready' : '⏳ No active session';
-    ctx.reply(`Current Status: ${status}\n\nBot Version: 2.0.0\nUptime: ${process.uptime().toFixed(2)}s`);
+    ctx.reply(`<b>Current Status:</b> ${status}\n\n<b>Bot Version:</b> 2.0.0\n<b>Uptime:</b> ${process.uptime().toFixed(2)}s`, { parse_mode: 'HTML' });
   });
   
   bot.command('qr', (ctx) => {
-    ctx.reply('📱 QR Code Generation started. Please visit the web interface at your Railway URL to scan and generate the session.');
+    generateSessionQR(ctx);
   });
   
   bot.command('pair', (ctx) => {
-    ctx.reply('☎️ Phone pairing started. Please visit the web interface at your Railway URL to enter your phone number.');
+    ctx.reply('📞 Please send your phone number in format: +1234567890');
+    telegramPhoneUserId = ctx.from.id;
   });
   
   bot.command('generate_session', (ctx) => {
-    ctx.reply('🔄 Generating session... Please visit the web interface at your Railway URL to monitor progress.');
+    if (sessionGenerated && sessionId) {
+      ctx.reply(`✅ <b>Session Ready!</b>\n\n🔐 <code>${sessionId}</code>`, { parse_mode: 'HTML' });
+    } else {
+      ctx.reply('⏳ No session generated yet. Use /qr or /pair to generate one.');
+    }
   });
   
-  // Catch-all for unrecognized commands
+  // Handle phone number input
   bot.on('text', (ctx) => {
-    ctx.reply('❓ Unknown command. Use /help to see available commands.');
+    const text = ctx.message.text;
+    
+    // Check if user is sending phone number after /pair command
+    if (telegramPhoneUserId === ctx.from.id && text.match(/^\+?[0-9]{10,}$/)) {
+      generateSessionPhone(text, ctx);
+      telegramPhoneUserId = null;
+    } else if (!text.startsWith('/')) {
+      ctx.reply('❓ Unknown command. Use /help to see available commands.');
+    }
   });
   
   // Error handling
