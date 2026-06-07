@@ -21,12 +21,45 @@ let generationInProgress = false;
 let qrTimeout = null;
 let phoneTimeout = null;
 
+// Telegram Bot Commands Configuration
+const TELEGRAM_COMMANDS = {
+  '/start': {
+    description: 'Welcome message',
+    handler: 'showWelcomeMessage'
+  },
+  '/pair': {
+    description: 'Generate WhatsApp pair code',
+    handler: 'generatePairingCode'
+  },
+  '/ping': {
+    description: 'Check bot latency',
+    handler: 'checkLatency'
+  },
+  '/help': {
+    description: 'Show this menu',
+    handler: 'showHelpMenu'
+  },
+  '/generate_session': {
+    description: 'Generate WhatsApp session',
+    handler: 'generateSession'
+  },
+  '/qr': {
+    description: 'Generate QR code',
+    handler: 'generateQRCode'
+  },
+  '/status': {
+    description: 'Check session status',
+    handler: 'checkSessionStatus'
+  }
+};
+
 // Log startup info
 console.log('🚀 SIMON-TECH-BOT v2.0.0 Starting...');
 console.log(`📦 Environment: ${process.env.NODE_ENV || 'development'}`);
 console.log(`📱 Port: ${PORT}`);
 if (TELEGRAM_BOT_TOKEN) {
   console.log('✅ Telegram Bot Token loaded');
+  console.log(`🤖 Telegram Commands Available: ${Object.keys(TELEGRAM_COMMANDS).length}`);
 } else {
   console.log('⚠️  No Telegram Bot Token found (optional)');
 }
@@ -239,6 +272,36 @@ async function generateSessionPhone(phoneNumber) {
     pairingCode = null;
     resetState('phone');
   }
+}
+
+// Telegram Command Handlers
+function getCommandsList() {
+  let commands = '📋 **Available Commands:**\n\n';
+  for (const [cmd, info] of Object.entries(TELEGRAM_COMMANDS)) {
+    commands += `${cmd} — ${info.description}\n`;
+  }
+  return commands;
+}
+
+function getWelcomeMessage() {
+  return `🤖 Welcome to SIMON-TECH-BOT!\n\n` +
+    `This bot helps you generate WhatsApp sessions for automation.\n\n` +
+    `✨ Features:\n` +
+    `• Generate WhatsApp session via QR Code\n` +
+    `• Generate session via Phone Number pairing\n` +
+    `• Check bot status and latency\n\n` +
+    `Use /help to see all available commands.`;
+}
+
+function getHelpMenu() {
+  return `🆘 **Help Menu**\n\n` +
+    `${getCommandsList()}\n` +
+    `📖 Examples:\n` +
+    `/start - Start the bot\n` +
+    `/pair - Generate WhatsApp pair code\n` +
+    `/qr - Generate QR code for session\n` +
+    `/status - Check current session status\n\n` +
+    `For more info, visit: https://github.com/vivi-v4/SIMON-TECH-bot2`;
 }
 
 // Web UI
@@ -716,17 +779,51 @@ app.get('/check-session', (req, res) => {
   res.json({ sessionGenerated, sessionId });
 });
 
+// Telegram Bot API Endpoints
+app.get('/commands', (req, res) => {
+  res.json({
+    status: 'success',
+    commands: TELEGRAM_COMMANDS,
+    total: Object.keys(TELEGRAM_COMMANDS).length
+  });
+});
+
+app.post('/telegram/message', (req, res) => {
+  const { text } = req.body;
+  
+  if (!text) {
+    return res.status(400).json({ error: 'Message text required' });
+  }
+
+  const command = text.toLowerCase().split(' ')[0];
+  
+  if (TELEGRAM_COMMANDS[command]) {
+    res.json({
+      status: 'success',
+      command: command,
+      description: TELEGRAM_COMMANDS[command].description
+    });
+  } else {
+    res.json({
+      status: 'unknown_command',
+      message: 'Command not recognized. Use /help for available commands.'
+    });
+  }
+});
+
 // Health check endpoint for Railway
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK',
     uptime: process.uptime(),
-    version: '2.0.0'
+    version: '2.0.0',
+    telegram_commands: Object.keys(TELEGRAM_COMMANDS).length
   });
 });
 
 app.listen(PORT, () => {
   console.log(`\n✅ SIMON-TECH-BOT v2.0.0 is running!`);
   console.log(`🌐 Server: http://localhost:${PORT}`);
-  console.log(`📱 Open in your browser to generate SESSION_ID\n`);
+  console.log(`📱 Open in your browser to generate SESSION_ID`);
+  console.log(`📋 Available commands: ${Object.keys(TELEGRAM_COMMANDS).join(', ')}\n`);
 });
