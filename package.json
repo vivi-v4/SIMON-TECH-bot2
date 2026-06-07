@@ -1,0 +1,31 @@
+{
+  "name": "SIMON-TECH-bot2",
+  "version": "2.0.0",
+  "description": "WhatsApp Bot with Session Generator",
+  "main": "session-generator-v2.js",
+  "scripts": {
+    "start": "node session-generator-v2.js",
+    "dev": "nodemon session-generator-v2.js",
+    "session": "node session-generator-v2.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "@whiskeysockets/baileys": "^6.3.0",
+    "qrcode": "^1.5.3",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "telegram",
+    "automation"
+  ],
+  "author": "SIMON-TECH",
+  "license": "MIT",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
