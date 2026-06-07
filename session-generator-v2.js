@@ -31,8 +31,36 @@ let activeSocket = null;
 let generationInProgress = false;
 let qrTimeout = null;
 let phoneTimeout = null;
-let telegramQRUserId = null;
-let telegramPhoneUserId = null;
+
+// Track user sessions
+const userSessions = new Map();
+
+// Country codes mapping
+const COUNTRY_CODES = {
+  'us': { flag: '🇺🇸', code: '+1', country: 'United States' },
+  'uk': { flag: '🇬🇧', code: '+44', country: 'United Kingdom' },
+  'in': { flag: '🇮🇳', code: '+91', country: 'India' },
+  'bd': { flag: '🇧🇩', code: '+880', country: 'Bangladesh' },
+  'pk': { flag: '🇵🇰', code: '+92', country: 'Pakistan' },
+  'ng': { flag: '🇳🇬', code: '+234', country: 'Nigeria' },
+  'za': { flag: '🇿🇦', code: '+27', country: 'South Africa' },
+  'eg': { flag: '🇪🇬', code: '+20', country: 'Egypt' },
+  'mx': { flag: '🇲🇽', code: '+52', country: 'Mexico' },
+  'br': { flag: '🇧🇷', code: '+55', country: 'Brazil' },
+  'ar': { flag: '🇦🇷', code: '+54', country: 'Argentina' },
+  'ph': { flag: '🇵🇭', code: '+63', country: 'Philippines' },
+  'id': { flag: '🇮🇩', code: '+62', country: 'Indonesia' },
+  'th': { flag: '🇹🇭', code: '+66', country: 'Thailand' },
+  'vn': { flag: '🇻🇳', code: '+84', country: 'Vietnam' },
+  'jp': { flag: '🇯🇵', code: '+81', country: 'Japan' },
+  'kr': { flag: '🇰🇷', code: '+82', country: 'South Korea' },
+  'de': { flag: '🇩🇪', code: '+49', country: 'Germany' },
+  'fr': { flag: '🇫🇷', code: '+33', country: 'France' },
+  'it': { flag: '🇮🇹', code: '+39', country: 'Italy' },
+  'es': { flag: '🇪🇸', code: '+34', country: 'Spain' },
+  'ca': { flag: '🇨🇦', code: '+1', country: 'Canada' },
+  'au': { flag: '🇦🇺', code: '+61', country: 'Australia' },
+};
 
 // Telegram Bot Commands Configuration
 const TELEGRAM_COMMANDS = {
@@ -181,7 +209,7 @@ async function generateSessionQR(telegramCtx = null) {
           
           // Send session to Telegram
           if (telegramCtx) {
-            telegramCtx.reply(`✅ Session generated successfully!\n\n🔐 <code>${sessionId}</code>`, {
+            telegramCtx.reply(`✅ <b>Session generated successfully!</b>\n\n🔐 <code>${sessionId}</code>`, {
               parse_mode: 'HTML'
             });
           }
@@ -244,7 +272,9 @@ async function generateSessionPhone(phoneNumber, telegramCtx = null) {
   resetState('phone');
   
   if (telegramCtx) {
-    telegramCtx.reply(`⏳ Requesting pairing code for ${phoneNumber}... Please wait...`);
+    telegramCtx.reply(`⏳ <b>Connecting to WhatsApp...</b>\n\n📱 <b>Number:</b> ${phoneNumber}\n\n<i>Please wait while we generate your pairing code...</i>`, {
+      parse_mode: 'HTML'
+    });
   }
 
   try {
@@ -276,7 +306,7 @@ async function generateSessionPhone(phoneNumber, telegramCtx = null) {
           
           // Send session to Telegram
           if (telegramCtx) {
-            telegramCtx.reply(`✅ Session generated successfully!\n\n🔐 <code>${sessionId}</code>`, {
+            telegramCtx.reply(`✅ <b>Session generated successfully!</b>\n\n🔐 <code>${sessionId}</code>`, {
               parse_mode: 'HTML'
             });
           }
@@ -319,9 +349,22 @@ async function generateSessionPhone(phoneNumber, telegramCtx = null) {
           pairingCode = code;
           console.log(`\n📱 Pairing Code: ${code}\n`);
           
-          // Send pairing code to Telegram
+          // Send pairing code to Telegram with fancy formatting
           if (telegramCtx) {
-            telegramCtx.reply(`📲 Pairing Code: <code>${code}</code>\n\nEnter this code in WhatsApp Linked Devices to continue.`, {
+            const message = `
+╰┈➤ <b>Sᴇssɪᴏɴ Cᴏɴɴᴇᴄᴛɪɴɢ. ❤️‍🩹</b>
+
+╰┈➤ <b>ᴘᴀɪʀɪɴɢ ᴄᴏᴅᴇ :</b> <code>${code}</code>
+
+╰┈➤ <b>ɪɴsᴛʀᴜᴄᴛɪᴏɴs :</b>
+   1️⃣ Open WhatsApp on your phone
+   2️⃣ Go to Settings → Linked Devices
+   3️⃣ Tap "Link a device"
+   4️⃣ Enter the code above when prompted
+
+⏱️ Code expires in 2 minutes
+`;
+            telegramCtx.reply(message, {
               parse_mode: 'HTML'
             });
           }
@@ -389,6 +432,20 @@ function getHelpMenu() {
     `For more info, visit: https://github.com/vivi-v4/SIMON-TECH-bot2`;
 }
 
+function showCountrySelection() {
+  let message = `[ ♡ SIMON TECH BOT2 👀 ]\n\n`;
+  message += `<b>Select your country:</b>\n\n`;
+  
+  let i = 1;
+  for (const [code, info] of Object.entries(COUNTRY_CODES)) {
+    message += `${info.flag} ${info.country} (${info.code})\n`;
+    if (i % 3 === 0) message += '\n';
+    i++;
+  }
+  
+  return message;
+}
+
 // Setup Telegram Bot Commands
 if (bot) {
   bot.start((ctx) => ctx.reply(getWelcomeMessage(), { parse_mode: 'HTML' }));
@@ -396,7 +453,7 @@ if (bot) {
   bot.command('help', (ctx) => ctx.reply(getHelpMenu(), { parse_mode: 'HTML' }));
   
   bot.command('ping', (ctx) => {
-    const latency = Math.random() * 100; // Simulated latency
+    const latency = Math.random() * 100;
     ctx.reply(`🏓 Pong! Latency: ${latency.toFixed(2)}ms`);
   });
   
@@ -410,8 +467,51 @@ if (bot) {
   });
   
   bot.command('pair', (ctx) => {
-    ctx.reply('📞 Please send your phone number in format: +1234567890');
-    telegramPhoneUserId = ctx.from.id;
+    const userId = ctx.from.id;
+    userSessions.set(userId, { step: 'country_select', phoneNumber: null, countryCode: null });
+    
+    const message = `[ ♡ SIMON TECH BOT2 👀 ]\n\n<b>Select your country to get the correct country code:</b>\n\n`;
+    const countryButtons = [];
+    
+    // Create inline buttons for countries
+    const countryList = Object.entries(COUNTRY_CODES);
+    for (let i = 0; i < countryList.length; i += 2) {
+      const btn1 = countryList[i];
+      const btn2 = countryList[i + 1];
+      
+      const row = [
+        { text: `${btn1[1].flag} ${btn1[1].country}`, callback_data: `country_${btn1[0]}` }
+      ];
+      
+      if (btn2) {
+        row.push({ text: `${btn2[1].flag} ${btn2[1].country}`, callback_data: `country_${btn2[0]}` });
+      }
+      
+      countryButtons.push(row);
+    }
+    
+    ctx.reply(message, {
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: countryButtons
+      }
+    });
+  });
+  
+  // Handle country selection
+  bot.action(/country_(.+)/, async (ctx) => {
+    const countryCode = ctx.match[1];
+    const userId = ctx.from.id;
+    const countryInfo = COUNTRY_CODES[countryCode];
+    
+    if (countryInfo) {
+      userSessions.set(userId, { step: 'enter_phone', countryCode: countryInfo.code, country: countryInfo.country });
+      
+      const message = `[ ♡ SIMON TECH BOT2 👀 ]\n\n╰┈➤ <b>ɴᴜᴍʙᴇʀ :</b> ${countryInfo.flag} ${countryInfo.country} (${countryInfo.code})\n\n<i>Please send your phone number without the country code.\nExample: 9876543210</i>`;
+      
+      await ctx.reply(message, { parse_mode: 'HTML' });
+      ctx.answerCbQuery();
+    }
   });
   
   bot.command('generate_session', (ctx) => {
@@ -422,14 +522,21 @@ if (bot) {
     }
   });
   
-  // Handle phone number input
+  // Handle text messages for phone number input
   bot.on('text', (ctx) => {
-    const text = ctx.message.text;
+    const text = ctx.message.text.trim();
+    const userId = ctx.from.id;
+    const userSession = userSessions.get(userId);
     
-    // Check if user is sending phone number after /pair command
-    if (telegramPhoneUserId === ctx.from.id && text.match(/^\+?[0-9]{10,}$/)) {
-      generateSessionPhone(text, ctx);
-      telegramPhoneUserId = null;
+    if (userSession && userSession.step === 'enter_phone') {
+      // Validate phone number
+      if (/^\d{10,}$/.test(text)) {
+        const fullPhoneNumber = userSession.countryCode + text;
+        userSessions.delete(userId);
+        generateSessionPhone(fullPhoneNumber, ctx);
+      } else {
+        ctx.reply('❌ Invalid phone number. Please send only digits (e.g., 9876543210)');
+      }
     } else if (!text.startsWith('/')) {
       ctx.reply('❓ Unknown command. Use /help to see available commands.');
     }
@@ -442,7 +549,7 @@ if (bot) {
   });
 }
 
-// Web UI
+// Web UI (simplified)
 app.get('/', (req, res) => {
   res.send(`
     <!DOCTYPE html>
@@ -452,11 +559,6 @@ app.get('/', (req, res) => {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <style>
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
         body {
           font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
           background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -470,418 +572,32 @@ app.get('/', (req, res) => {
           background: white;
           border-radius: 15px;
           box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-          max-width: 700px;
+          max-width: 500px;
           width: 100%;
           padding: 40px;
           text-align: center;
         }
-        h1 {
-          color: #333;
-          margin-bottom: 10px;
-          font-size: 28px;
-        }
-        .subtitle {
-          color: #666;
-          margin-bottom: 30px;
-          font-size: 14px;
-        }
-        .tabs {
-          display: flex;
-          gap: 10px;
-          margin: 20px 0;
-          border-bottom: 2px solid #eee;
-        }
-        .tab-btn {
-          flex: 1;
-          padding: 12px;
-          background: none;
-          border: none;
-          cursor: pointer;
-          font-size: 14px;
-          font-weight: 600;
-          color: #999;
-          border-bottom: 3px solid transparent;
-          transition: all 0.3s;
-        }
-        .tab-btn.active {
-          color: #667eea;
-          border-bottom-color: #667eea;
-        }
-        .tab-content {
-          display: none;
-        }
-        .tab-content.active {
-          display: block;
-        }
-        .qr-container {
-          margin: 30px 0;
-          padding: 20px;
-          background: #f8f9fa;
-          border-radius: 10px;
-          display: none;
-        }
-        .qr-container.active {
-          display: block;
-        }
-        #qrCode {
-          max-width: 300px;
-          width: 100%;
-          margin: 0 auto;
-        }
-        .button {
-          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-          color: white;
-          border: none;
-          padding: 12px 30px;
-          border-radius: 5px;
-          cursor: pointer;
-          font-size: 16px;
-          margin: 10px 5px;
-          transition: transform 0.2s, box-shadow 0.2s;
-        }
-        .button:hover {
-          transform: translateY(-2px);
-          box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-        }
-        .button:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-          transform: none;
-        }
-        .input-group {
-          margin: 20px 0;
-          text-align: left;
-        }
-        .input-group label {
-          display: block;
-          margin-bottom: 8px;
-          font-weight: 600;
-          color: #333;
-        }
-        .input-group input {
-          width: 100%;
-          padding: 10px;
-          border: 2px solid #ddd;
-          border-radius: 5px;
-          font-size: 14px;
-          transition: border-color 0.3s;
-        }
-        .input-group input:focus {
-          outline: none;
-          border-color: #667eea;
-        }
-        .session-display {
-          margin: 20px 0;
-          padding: 15px;
-          background: #f0f4ff;
-          border-radius: 8px;
-          display: none;
-          word-break: break-all;
-          max-height: 200px;
-          overflow-y: auto;
-          text-align: left;
-          border: 2px solid #667eea;
-          font-size: 12px;
-          font-family: monospace;
-        }
-        .session-display.active {
-          display: block;
-        }
-        .copy-btn {
-          background: #28a745;
-          margin-top: 10px;
-        }
-        .copy-btn:hover {
-          box-shadow: 0 10px 20px rgba(40, 167, 69, 0.3);
-        }
-        .status {
-          padding: 10px;
-          border-radius: 5px;
-          margin: 15px 0;
-          display: none;
-          font-weight: bold;
-        }
-        .status.active {
-          display: block;
-        }
-        .status.success {
-          background: #d4edda;
-          color: #155724;
-          border: 1px solid #c3e6cb;
-        }
-        .status.waiting {
-          background: #fff3cd;
-          color: #856404;
-          border: 1px solid #ffeaa7;
-        }
-        .status.error {
-          background: #f8d7da;
-          color: #721c24;
-          border: 1px solid #f5c6cb;
-        }
-        .info {
-          background: #e7f3ff;
-          padding: 15px;
-          border-radius: 8px;
-          margin: 20px 0;
-          font-size: 14px;
-          color: #004085;
-          border-left: 4px solid #004085;
-          text-align: left;
-        }
-        .pairing-code {
-          background: #fff3cd;
-          padding: 15px;
-          border-radius: 8px;
-          margin: 15px 0;
-          font-size: 18px;
-          font-weight: bold;
-          color: #856404;
-          font-family: monospace;
-          letter-spacing: 2px;
-        }
+        h1 { color: #333; margin-bottom: 10px; }
+        .info { background: #e7f3ff; padding: 15px; border-radius: 8px; margin: 20px 0; color: #004085; }
+        .status { padding: 15px; border-radius: 8px; margin: 15px 0; background: #d4edda; color: #155724; }
       </style>
     </head>
     <body>
       <div class="container">
-        <h1>🤖 SIMON-TECH-BOT</h1>
-        <p class="subtitle">WhatsApp Session Generator v2</p>
+        <h1>🤖 SIMON-TECH-BOT v2.0.0</h1>
+        <p style="color: #666; margin-bottom: 20px;">WhatsApp Session Generator</p>
         
         <div class="info">
-          <strong>ℹ️ Choose pairing method:</strong><br>
-          Select either QR Code or Phone Number to generate your session.
+          <strong>✅ Bot is running!</strong><br>
+          Use Telegram bot <strong>@simontech2bot</strong> to generate your session.
         </div>
-
-        <div class="tabs">
-          <button class="tab-btn active" onclick="switchTab('qr')">📱 QR Code</button>
-          <button class="tab-btn" onclick="switchTab('phone')">☎️ Phone Number</button>
-        </div>
-
-        <!-- QR Code Tab -->
-        <div id="qr" class="tab-content active">
-          <div class="info">
-            <strong>📖 Instructions:</strong><br>
-            1. Click "Generate QR Code"<br>
-            2. Scan with WhatsApp on your phone<br>
-            3. Wait for session to generate<br>
-            4. Copy your SESSION_ID
-          </div>
-
-          <button class="button" id="qr-btn" onclick="generateQR()">🔄 Generate QR Code</button>
-          
-          <div id="qr-status" class="status"></div>
-          
-          <div class="qr-container" id="qrContainer">
-            <p style="color: #666; margin-bottom: 15px;">Scan this QR code with your WhatsApp:</p>
-            <div id="qrCode"></div>
-            <p style="color: #999; font-size: 12px; margin-top: 10px;">QR expires in 60 seconds</p>
-          </div>
-
-          <div class="session-display" id="qr-sessionDisplay">
-            <strong>✅ Session ID Generated!</strong><br><br>
-            <code id="qr-sessionId"></code>
-          </div>
-
-          <button class="button copy-btn" id="qr-copyBtn" onclick="copySession('qr')" style="display: none;">📋 Copy SESSION_ID</button>
-        </div>
-
-        <!-- Phone Number Tab -->
-        <div id="phone" class="tab-content">
-          <div class="info">
-            <strong>📖 Instructions:</strong><br>
-            1. Enter your WhatsApp phone number (with country code)<br>
-            2. Click "Request Pairing Code"<br>
-            3. A 8-digit code will appear<br>
-            4. Enter it in WhatsApp linking<br>
-            5. Copy your SESSION_ID
-          </div>
-
-          <div class="input-group">
-            <label for="phoneNumber">📞 Phone Number (e.g., +1234567890):</label>
-            <input type="tel" id="phoneNumber" placeholder="+1234567890" />
-          </div>
-
-          <button class="button" id="phone-btn" onclick="generatePhone()">📲 Request Pairing Code</button>
-          
-          <div id="phone-status" class="status"></div>
-          
-          <div class="pairing-code" id="pairingCodeDisplay" style="display: none;">
-            Code: <span id="pairingCodeValue"></span>
-          </div>
-
-          <div class="session-display" id="phone-sessionDisplay">
-            <strong>✅ Session ID Generated!</strong><br><br>
-            <code id="phone-sessionId"></code>
-          </div>
-
-          <button class="button copy-btn" id="phone-copyBtn" onclick="copySession('phone')" style="display: none;">📋 Copy SESSION_ID</button>
+        
+        <div style="margin-top: 30px; font-size: 14px; color: #666;">
+          <p>📱 Open Telegram</p>
+          <p>🔍 Search for <strong>@simontech2bot</strong></p>
+          <p>💬 Send <strong>/start</strong></p>
         </div>
       </div>
-
-      <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode.js/1.5.3/qrcode.min.js"></script>
-      <script>
-        function switchTab(tab) {
-          document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-          document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
-          document.getElementById(tab).classList.add('active');
-          event.target.classList.add('active');
-        }
-
-        async function generateQR() {
-          const btn = document.getElementById('qr-btn');
-          const status = document.getElementById('qr-status');
-          const qrContainer = document.getElementById('qrContainer');
-          const sessionDisplay = document.getElementById('qr-sessionDisplay');
-          const copyBtn = document.getElementById('qr-copyBtn');
-
-          btn.disabled = true;
-          status.textContent = '⏳ Generating QR Code...';
-          status.className = 'status active waiting';
-          qrContainer.classList.remove('active');
-          sessionDisplay.classList.remove('active');
-          copyBtn.style.display = 'none';
-
-          try {
-            const response = await fetch('/generate-qr');
-            const data = await response.json();
-
-            if (data.qr) {
-              document.getElementById('qrCode').innerHTML = '';
-              new QRCode(document.getElementById('qrCode'), data.qr);
-              qrContainer.classList.add('active');
-              status.textContent = '📱 Scan the QR code with your WhatsApp phone';
-              status.className = 'status active waiting';
-
-              checkSessionQR();
-            } else {
-              throw new Error('Failed to generate QR code');
-            }
-          } catch (error) {
-            status.textContent = '❌ Error: ' + error.message;
-            status.className = 'status active error';
-            btn.disabled = false;
-          }
-        }
-
-        async function generatePhone() {
-          const phoneNumber = document.getElementById('phoneNumber').value.trim();
-          const btn = document.getElementById('phone-btn');
-          
-          if (!phoneNumber) {
-            alert('❌ Please enter a phone number');
-            return;
-          }
-
-          if (phoneNumber.length < 10 || !/^\+?[0-9]{10,}$/.test(phoneNumber)) {
-            alert('❌ Please enter a valid phone number (e.g., +1234567890)');
-            return;
-          }
-
-          btn.disabled = true;
-          const status = document.getElementById('phone-status');
-          const pairingDisplay = document.getElementById('pairingCodeDisplay');
-          const sessionDisplay = document.getElementById('phone-sessionDisplay');
-          const copyBtn = document.getElementById('phone-copyBtn');
-
-          status.textContent = '⏳ Requesting pairing code...';
-          status.className = 'status active waiting';
-          pairingDisplay.style.display = 'none';
-          sessionDisplay.classList.remove('active');
-          copyBtn.style.display = 'none';
-
-          try {
-            const response = await fetch('/generate-phone', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ phoneNumber })
-            });
-            const data = await response.json();
-
-            if (data.error) {
-              throw new Error(data.error);
-            }
-
-            if (data.pairingCode && data.pairingCode !== 'Generating...' && data.pairingCode !== 'INVALID_PHONE') {
-              document.getElementById('pairingCodeValue').textContent = data.pairingCode;
-              pairingDisplay.style.display = 'block';
-              status.textContent = '📲 Pairing code sent. Check your WhatsApp linked devices.';
-              status.className = 'status active waiting';
-
-              checkSessionPhone();
-            } else {
-              status.textContent = '⏳ Generating pairing code, please wait...';
-              checkSessionPhone();
-            }
-          } catch (error) {
-            status.textContent = '❌ Error: ' + error.message;
-            status.className = 'status active error';
-            btn.disabled = false;
-          }
-        }
-
-        async function checkSessionQR() {
-          try {
-            const response = await fetch('/check-session');
-            const data = await response.json();
-
-            if (data.sessionGenerated) {
-              const status = document.getElementById('qr-status');
-              const sessionDisplay = document.getElementById('qr-sessionDisplay');
-              const copyBtn = document.getElementById('qr-copyBtn');
-              const btn = document.getElementById('qr-btn');
-
-              document.getElementById('qr-sessionId').textContent = data.sessionId;
-              sessionDisplay.classList.add('active');
-              copyBtn.style.display = 'inline-block';
-              
-              status.textContent = '✅ Session generated successfully!';
-              status.className = 'status active success';
-              
-              document.getElementById('qrContainer').classList.remove('active');
-              btn.disabled = false;
-            } else {
-              setTimeout(checkSessionQR, 2000);
-            }
-          } catch (error) {
-            setTimeout(checkSessionQR, 2000);
-          }
-        }
-
-        async function checkSessionPhone() {
-          try {
-            const response = await fetch('/check-session');
-            const data = await response.json();
-
-            if (data.sessionGenerated) {
-              const status = document.getElementById('phone-status');
-              const sessionDisplay = document.getElementById('phone-sessionDisplay');
-              const copyBtn = document.getElementById('phone-copyBtn');
-              const btn = document.getElementById('phone-btn');
-
-              document.getElementById('phone-sessionId').textContent = data.sessionId;
-              sessionDisplay.classList.add('active');
-              copyBtn.style.display = 'inline-block';
-              
-              status.textContent = '✅ Session generated successfully!';
-              status.className = 'status active success';
-              
-              document.getElementById('pairingCodeDisplay').style.display = 'none';
-              btn.disabled = false;
-            } else {
-              setTimeout(checkSessionPhone, 2000);
-            }
-          } catch (error) {
-            setTimeout(checkSessionPhone, 2000);
-          }
-        }
-
-        function copySession(method) {
-          const sessionText = document.getElementById(method + '-sessionId').textContent;
-          navigator.clipboard.writeText(sessionText).then(() => {
-            alert('✅ SESSION_ID copied to clipboard!');
-          });
-        }
-      </script>
     </body>
     </html>
   `);
@@ -900,7 +616,6 @@ app.post('/generate-phone', (req, res) => {
   const { phoneNumber } = req.body;
   if (phoneNumber) {
     generateSessionPhone(phoneNumber);
-    // Return pairing code with small delay to allow generation
     setTimeout(() => {
       if (pairingCode && pairingCode !== 'INVALID_PHONE') {
         res.json({ pairingCode });
@@ -917,7 +632,6 @@ app.get('/check-session', (req, res) => {
   res.json({ sessionGenerated, sessionId });
 });
 
-// Telegram Bot API Endpoints
 app.get('/commands', (req, res) => {
   res.json({
     status: 'success',
@@ -926,51 +640,23 @@ app.get('/commands', (req, res) => {
   });
 });
 
-app.post('/telegram/message', (req, res) => {
-  const { text } = req.body;
-  
-  if (!text) {
-    return res.status(400).json({ error: 'Message text required' });
-  }
-
-  const command = text.toLowerCase().split(' ')[0];
-  
-  if (TELEGRAM_COMMANDS[command]) {
-    res.json({
-      status: 'success',
-      command: command,
-      description: TELEGRAM_COMMANDS[command].description
-    });
-  } else {
-    res.json({
-      status: 'unknown_command',
-      message: 'Command not recognized. Use /help for available commands.'
-    });
-  }
-});
-
-// Health check endpoint for Railway
 app.get('/health', (req, res) => {
   res.status(200).json({ 
     status: 'OK',
     uptime: process.uptime(),
     version: '2.0.0',
-    telegram_commands: Object.keys(TELEGRAM_COMMANDS).length,
     telegram_bot_active: bot !== null
   });
 });
 
-// Start Express server
 const server = app.listen(PORT, () => {
   console.log(`\n✅ SIMON-TECH-BOT v2.0.0 is running!`);
   console.log(`🌐 Server: http://localhost:${PORT}`);
-  console.log(`📱 Open in your browser to generate SESSION_ID`);
   console.log(`📋 Available commands: ${Object.keys(TELEGRAM_COMMANDS).join(', ')}\n`);
 });
 
-// Start Telegram Bot with webhook or polling
+// Start Telegram Bot
 if (bot) {
-  // Use polling for reliability (works better on Railway)
   bot.launch({
     polling: {
       interval: 300,
@@ -984,24 +670,17 @@ if (bot) {
     console.error('❌ Failed to start Telegram Bot:', err);
   });
   
-  // Enable graceful shutdown
   process.once('SIGINT', () => {
-    console.log('Shutting down Telegram Bot...');
+    console.log('Shutting down...');
     bot.stop('SIGINT');
-    server.close(() => {
-      console.log('Server closed');
-      process.exit(0);
-    });
+    server.close(() => process.exit(0));
   });
   
   process.once('SIGTERM', () => {
-    console.log('Shutting down Telegram Bot...');
+    console.log('Shutting down...');
     bot.stop('SIGTERM');
-    server.close(() => {
-      console.log('Server closed');
-      process.exit(0);
-    });
+    server.close(() => process.exit(0));
   });
 } else {
-  console.log('⚠️  Telegram Bot disabled (no token provided)');
+  console.log('⚠️  Telegram Bot disabled (no token)');
 }
